@@ -191,11 +191,27 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     val latency = System.currentTimeMillis() - startTime
                     val isConnected = chainStatus != null
 
-                    // 2. Fetch Native BETM Balance
-                    val balanceRes = try {
+                    // 2. Fetch Native BETM Balance (Dual check: Native 64-hex and Ethereum 0x...)
+                    val nativeBal = try {
                         api.getBalance(activeWallet.nativeAddress)
                     } catch (e: Exception) {
-                        BalanceResponse(
+                        null
+                    }
+
+                    val ethBal = try {
+                        api.getBalance(activeWallet.ethAddress)
+                    } catch (e: Exception) {
+                        null
+                    }
+
+                    // Use the non-zero / higher balance
+                    val balanceRes = when {
+                        nativeBal != null && ethBal != null -> {
+                            if (ethBal.balanceUnits > nativeBal.balanceUnits) ethBal else nativeBal
+                        }
+                        nativeBal != null -> nativeBal
+                        ethBal != null -> ethBal
+                        else -> BalanceResponse(
                             address = activeWallet.nativeAddress,
                             balance = userPreferences.value.lastKnownBalance
                         )
@@ -205,18 +221,33 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     val supply = try { api.getSupply() } catch (e: Exception) { null }
                     val fees = try { api.getFees() } catch (e: Exception) { null }
 
-                    // 4. Token Auto-Detect: Fetch /tokens, then /balance/<address>/<token_id>
+                    // 4. Token Auto-Detect: Dual check on both nativeAddress and ethAddress
                     val detectedTokens = try {
                         val allTokens = api.getTokens().tokens
                         allTokens.map { token ->
-                            val tokenBal = try {
+                            val nativeTokenBal = try {
                                 api.getTokenBalance(activeWallet.nativeAddress, token.tokenId)
                             } catch (e: Exception) {
                                 null
                             }
+                            val ethTokenBal = try {
+                                api.getTokenBalance(activeWallet.ethAddress, token.tokenId)
+                            } catch (e: Exception) {
+                                null
+                            }
+
+                            val bestTokenBal = when {
+                                nativeTokenBal != null && ethTokenBal != null -> {
+                                    if (ethTokenBal.balanceUnits > nativeTokenBal.balanceUnits) ethTokenBal else nativeTokenBal
+                                }
+                                nativeTokenBal != null -> nativeTokenBal
+                                ethTokenBal != null -> ethTokenBal
+                                else -> null
+                            }
+
                             token.copy(
-                                userBalance = tokenBal?.balance ?: "0.00000000",
-                                userBalanceUnits = tokenBal?.balanceUnits ?: 0L
+                                userBalance = bestTokenBal?.balance ?: "0.00000000",
+                                userBalanceUnits = bestTokenBal?.balanceUnits ?: 0L
                             )
                         }
                     } catch (e: Exception) {
@@ -294,9 +325,17 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 val result = withContext(Dispatchers.IO) {
                     val api = ApiClientProvider.getService(userPreferences.value.nodeUrl)
 
-                    // Fetch latest balance & nonce
-                    val latestBalance = api.getBalance(activeWallet.nativeAddress)
+                    // Fetch latest balance & nonce across both addresses
+                    val nativeBal = try { api.getBalance(activeWallet.nativeAddress) } catch (e: Exception) { null }
+                    val ethBal = try { api.getBalance(activeWallet.ethAddress) } catch (e: Exception) { null }
+                    val latestBalance = when {
+                        nativeBal != null && ethBal != null -> if (ethBal.balanceUnits > nativeBal.balanceUnits) ethBal else nativeBal
+                        nativeBal != null -> nativeBal
+                        ethBal != null -> ethBal
+                        else -> api.getBalance(activeWallet.nativeAddress)
+                    }
                     val nonce = latestBalance.nonce
+                    val senderAddress = if (latestBalance.address.isNotBlank()) latestBalance.address else activeWallet.nativeAddress
 
                     // Check balance for BETM
                     if (tokenId.isNullOrBlank()) {
@@ -309,7 +348,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
                     // Build canonical transaction payload for signing
                     val canonicalJson = Secp256k1Helper.createCanonicalTxPayload(
-                        sender = activeWallet.nativeAddress,
+                        sender = senderAddress,
                         recipient = cleanRecipient,
                         amount = formattedAmount,
                         fee = formattedFee,
@@ -324,7 +363,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     )
 
                     val request = NewTransactionRequest(
-                        sender = activeWallet.nativeAddress,
+                        sender = senderAddress,
                         recipient = cleanRecipient,
                         amount = formattedAmount,
                         fee = formattedFee,

@@ -120,7 +120,16 @@ class BetiumMinerService : Service() {
                     val blockIndex = template.index ?: template.height ?: 0L
                     val prevHash = template.previousHash ?: "0".repeat(64)
                     val difficulty = if (template.difficulty > 0) template.difficulty else 8L
-                    val target = template.target
+                    val protocolVersion = template.protocolVersion
+                    val merkleRoot = template.merkleRoot ?: ""
+                    val transactions = template.transactions ?: emptyList()
+                    val txJson = canonicalizeJson(transactions)
+                    val timestamp = template.timestamp ?: (System.currentTimeMillis() / 1000)
+
+                    // Betium canonical block JSON prefix/suffix for ultra-fast native PoW hashing
+                    // Keys in strict alphabetical order: difficulty, index, merkle_root, nonce, previous_hash, protocol_version, timestamp, transactions
+                    val prefix = """{"difficulty":$difficulty,"index":$blockIndex,"merkle_root":"$merkleRoot","nonce":"""
+                    val suffix = ""","previous_hash":"$prevHash","protocol_version":$protocolVersion,"timestamp":$timestamp,"transactions":$txJson}"""
 
                     MinerManager.updateState {
                         it.copy(
@@ -132,10 +141,9 @@ class BetiumMinerService : Service() {
                     MinerManager.log("Template loaded: Block #$blockIndex • Diff $difficulty")
 
                     var nonce = template.initialNonce ?: (System.currentTimeMillis() and 0xFFFFL)
-                    val timestamp = template.timestamp ?: (System.currentTimeMillis() / 1000)
                     var blockSolved = false
 
-                    // Mine in chunks of 500 hashes to yield coroutine & update stats
+                    // Mine in chunks of 600 hashes to yield coroutine & update stats
                     val batchSize = 600
                     while (isActive && isMining && !blockSolved) {
                         for (i in 0 until batchSize) {
@@ -143,20 +151,12 @@ class BetiumMinerService : Service() {
                             totalHashesCount++
                             hashesSinceLastCalc++
 
-                            // Construct candidate block header string
-                            val candidateString = "$blockIndex:$prevHash:$minerAddress:$nonce:$timestamp"
-                            val hashHex = Secp256k1Helper.sha256Hex(candidateString.toByteArray(Charsets.UTF_8))
+                            // Construct canonical Betium block JSON for candidate nonce
+                            val candidateJson = prefix + nonce + suffix
+                            val hashHex = Secp256k1Helper.sha256Hex(candidateJson.toByteArray(Charsets.UTF_8))
 
-                            // Check difficulty target
-                            val meetsTarget = if (!target.isNullOrBlank()) {
-                                try {
-                                    BigInteger(hashHex, 16) < BigInteger(target.removePrefix("0x"), 16)
-                                } catch (e: Exception) {
-                                    countLeadingZeroBits(hashHex) >= difficulty
-                                }
-                            } else {
-                                countLeadingZeroBits(hashHex) >= difficulty
-                            }
+                            // Check difficulty target (leading zero bits)
+                            val meetsTarget = countLeadingZeroBits(hashHex) >= difficulty
 
                             if (meetsTarget) {
                                 blockSolved = true
@@ -164,22 +164,36 @@ class BetiumMinerService : Service() {
                                 MinerManager.log("Hash: ${hashHex.take(16)}...")
 
                                 val submitReq = BlockSubmitRequest(
-                                    miner = minerAddress,
-                                    nonce = nonce,
-                                    blockHash = hashHex,
+                                    difficulty = difficulty,
                                     index = blockIndex,
-                                    previousHash = prevHash
+                                    merkleRoot = merkleRoot,
+                                    nonce = nonce,
+                                    previousHash = prevHash,
+                                    protocolVersion = protocolVersion,
+                                    timestamp = timestamp,
+                                    transactions = transactions,
+                                    hash = hashHex,
+                                    miner = minerAddress
                                 )
 
                                 try {
                                     val submitRes = apiService.submitBlock(submitReq)
-                                    blocksFoundCount++
-                                    MinerManager.log("Block submitted: ${submitRes.message ?: submitRes.status ?: "Accepted"}")
-                                    MinerManager.updateState {
-                                        it.copy(
-                                            blocksFound = blocksFoundCount,
-                                            statusMessage = "Block #$blockIndex accepted! Reward credited."
-                                        )
+                                    val accepted = submitRes.accepted ||
+                                            submitRes.status.equals("ok", ignoreCase = true) ||
+                                            submitRes.status.equals("success", ignoreCase = true) ||
+                                            submitRes.error == null
+
+                                    if (accepted) {
+                                        blocksFoundCount++
+                                        MinerManager.log("Block submitted successfully: ${submitRes.message ?: submitRes.status ?: "Accepted"}")
+                                        MinerManager.updateState {
+                                            it.copy(
+                                                blocksFound = blocksFoundCount,
+                                                statusMessage = "Block #$blockIndex accepted! Reward credited."
+                                            )
+                                        }
+                                    } else {
+                                        MinerManager.log("Node rejected block: ${submitRes.error ?: submitRes.message ?: "Unknown error"}")
                                     }
                                 } catch (subErr: Exception) {
                                     MinerManager.log("Block submission error: ${subErr.message}")
@@ -330,6 +344,28 @@ class BetiumMinerService : Service() {
         unregisterReceiver(batteryReceiver)
         stopMiningProcess()
         serviceJob.cancel()
+    }
+
+    private fun canonicalizeJson(obj: Any?): String {
+        return when (obj) {
+            null -> "null"
+            is String -> "\"$obj\""
+            is Number, is Boolean -> obj.toString()
+            is Map<*, *> -> {
+                val entries = obj.entries
+                    .filter { it.key != null && it.value != null }
+                    .sortedBy { it.key.toString() }
+                    .joinToString(",") { (k, v) ->
+                        "\"$k\":${canonicalizeJson(v)}"
+                    }
+                "{$entries}"
+            }
+            is List<*> -> {
+                val items = obj.joinToString(",") { canonicalizeJson(it) }
+                "[$items]"
+            }
+            else -> "\"$obj\""
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

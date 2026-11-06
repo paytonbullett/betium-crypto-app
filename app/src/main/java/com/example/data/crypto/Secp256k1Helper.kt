@@ -63,9 +63,10 @@ object Secp256k1Helper {
         // Uncompressed: 65 bytes (04 prefix + 32-byte X + 32-byte Y)
         val uncompressedBytes = publicPoint.getEncoded(false)
         val uncompressedHex = uncompressedBytes.toHex()
+        val keyBody = uncompressedBytes.copyOfRange(1, uncompressedBytes.size) // 64 bytes (X || Y)
 
-        // 1. Native address: SHA-256 of public key bytes -> 64 hex characters (lowercase, no 0x)
-        val nativeAddress = sha256Hex(compressedBytes)
+        // 1. Native address: SHA-256 of 64-byte uncompressed public key body (X || Y) -> 64 hex characters (lowercase, no 0x)
+        val nativeAddress = sha256Hex(keyBody)
 
         // 2. Ethereum address: Keccak-256 of 64 bytes of uncompressed public key (omitting the 0x04 prefix)
         // Take the last 20 bytes -> 0x + 40 lowercase hex characters
@@ -73,7 +74,7 @@ object Secp256k1Helper {
 
         return KeyPairInfo(
             privateKeyHex = cleanHex,
-            publicKeyHex = compressedHex,
+            publicKeyHex = keyBody.toHex(),
             uncompressedPublicKeyHex = uncompressedHex,
             nativeAddress = nativeAddress,
             ethAddress = ethAddress

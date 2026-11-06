@@ -92,17 +92,24 @@ data class BlockTemplate(
     @Json(name = "target") val target: String? = null,
     @Json(name = "miner") val miner: String? = null,
     @Json(name = "timestamp") val timestamp: Long? = null,
+    @Json(name = "merkle_root") val merkleRoot: String? = null,
+    @Json(name = "protocol_version") val protocolVersion: Int = 5,
     @Json(name = "transactions") val transactions: List<Map<String, Any>>? = null,
     @Json(name = "nonce") val initialNonce: Long? = null
 )
 
 @JsonClass(generateAdapter = true)
 data class BlockSubmitRequest(
-    @Json(name = "miner") val miner: String,
+    @Json(name = "difficulty") val difficulty: Long,
+    @Json(name = "index") val index: Long,
+    @Json(name = "merkle_root") val merkleRoot: String,
     @Json(name = "nonce") val nonce: Long,
-    @Json(name = "block_hash") val blockHash: String? = null,
-    @Json(name = "index") val index: Long? = null,
-    @Json(name = "previous_hash") val previousHash: String? = null
+    @Json(name = "previous_hash") val previousHash: String,
+    @Json(name = "protocol_version") val protocolVersion: Int = 5,
+    @Json(name = "timestamp") val timestamp: Long,
+    @Json(name = "transactions") val transactions: List<Map<String, Any>> = emptyList(),
+    @Json(name = "hash") val hash: String? = null,
+    @Json(name = "miner") val miner: String? = null
 )
 
 @JsonClass(generateAdapter = true)

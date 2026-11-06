@@ -15,9 +15,9 @@ class BetiumCryptoTest {
 
         // 32-byte private key = 64 hex characters
         assertEquals(64, keyPair.privateKeyHex.length)
-        // Compressed public key = 66 hex characters (33 bytes)
-        assertEquals(66, keyPair.publicKeyHex.length)
-        // Native address = SHA-256 of public key = 64 hex characters
+        // Public key body = 128 hex characters (64 bytes: X || Y)
+        assertEquals(128, keyPair.publicKeyHex.length)
+        // Native address = SHA-256 of 64-byte uncompressed public key body = 64 hex characters
         assertEquals(64, keyPair.nativeAddress.length)
         assertTrue(keyPair.nativeAddress.all { it in "0123456789abcdef" })
 
