@@ -155,13 +155,20 @@ class BetiumMinerService : Service() {
                             val candidateJson = prefix + nonce + suffix
                             val hashHex = Secp256k1Helper.sha256Hex(candidateJson.toByteArray(Charsets.UTF_8))
 
-                            // Check difficulty target (leading zero bits)
-                            val meetsTarget = countLeadingZeroBits(hashHex) >= difficulty
+                            // Check difficulty target using exact bit-shift test: (hashBigInt >> (256 - difficulty)) == 0
+                            val hashBigInt = BigInteger(hashHex, 16)
+                            val shiftAmount = 256 - difficulty.toInt()
+                            val meetsTarget = if (shiftAmount >= 0) {
+                                hashBigInt.shiftRight(shiftAmount) == BigInteger.ZERO
+                            } else {
+                                countLeadingZeroBits(hashHex) >= difficulty
+                            }
 
                             if (meetsTarget) {
                                 blockSolved = true
                                 MinerManager.log("🎉 BLOCK SOLVED! Nonce: $nonce")
-                                MinerManager.log("Hash: ${hashHex.take(16)}...")
+                                MinerManager.log("Hash: $hashHex")
+                                MinerManager.log("Hashed JSON payload: $candidateJson")
 
                                 val submitReq = BlockSubmitRequest(
                                     difficulty = difficulty,
@@ -193,10 +200,12 @@ class BetiumMinerService : Service() {
                                             )
                                         }
                                     } else {
-                                        MinerManager.log("Node rejected block: ${submitRes.error ?: submitRes.message ?: "Unknown error"}")
+                                        val errDetails = submitRes.error ?: submitRes.message ?: "Unknown node rejection"
+                                        MinerManager.log("❌ Node rejected block #$blockIndex: $errDetails")
+                                        MinerManager.log("Submitted block payload: index=$blockIndex, diff=$difficulty, nonce=$nonce, prevHash=$prevHash")
                                     }
                                 } catch (subErr: Exception) {
-                                    MinerManager.log("Block submission error: ${subErr.message}")
+                                    MinerManager.log("❌ Block submission exception: ${subErr.localizedMessage ?: subErr.message}")
                                 }
                                 break
                             }

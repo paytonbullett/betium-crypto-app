@@ -334,7 +334,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         ethBal != null -> ethBal
                         else -> api.getBalance(activeWallet.nativeAddress)
                     }
-                    val nonce = latestBalance.nonce
+                    val nonce = latestBalance.nonce + 1
                     val senderAddress = if (latestBalance.address.isNotBlank()) latestBalance.address else activeWallet.nativeAddress
 
                     // Check balance for BETM

@@ -64,15 +64,15 @@ class BetiumCryptoTest {
             nonce = 8
         )
 
-        // Strict alphabetical keys: amount, fee, nonce, recipient, sender
-        val expected = """{"amount":"1.50000000","fee":"0.00010000","nonce":8,"recipient":"recipient_address_hex","sender":"sender_address_hex"}"""
+        // Strict alphabetical keys with integer units: amount, fee, nonce, recipient, sender
+        val expected = """{"amount":150000000,"fee":10000,"nonce":8,"recipient":"recipient_address_hex","sender":"sender_address_hex"}"""
         assertEquals(expected, payload)
 
         // Sign transaction
         val samplePrivKey = "88b02c68889cd9bdff3ae6f4e47ff123886781d1a1dd76f0bb66302221948764"
         val signature = Secp256k1Helper.signMessage(samplePrivKey, payload.toByteArray(Charsets.UTF_8))
-        // 64-byte hex signature (r || s) = 128 hex chars
-        assertEquals(128, signature.length)
+        // DER signature is typically 140-142 hex chars (70-71 bytes)
+        assertTrue(signature.length >= 136)
     }
 
     @Test

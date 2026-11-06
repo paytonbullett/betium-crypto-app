@@ -95,45 +95,21 @@ object Secp256k1Helper {
         return "0x" + addressBytes.toHex()
     }
 
+    // Replaced by DER SHA-1 signMessage below
+
     /**
-     * Deterministic RFC 6979 ECDSA signature over SHA-256 hash of the canonical message.
-     * Returns 64-byte hex signature (r (32 bytes) + s (32 bytes)).
+     * Deterministic RFC 6979 ECDSA signature encoded in ASN.1 DER format over SHA-1 message hash.
      */
     fun signMessage(privateKeyHex: String, messageBytes: ByteArray): String {
         val cleanHex = privateKeyHex.trim().removePrefix("0x").lowercase()
         val privKeyInt = BigInteger(cleanHex, 16)
         val privParams = ECPrivateKeyParameters(privKeyInt, domainParameters)
 
-        // SHA-256 of message
-        val hash = sha256(messageBytes)
+        // SHA-1 message hash (matching python ecdsa default for secp256k1 signing)
+        val mdSha1 = MessageDigest.getInstance("SHA-1")
+        val hash = mdSha1.digest(messageBytes)
 
-        val signer = ECDSASigner(HMacDSAKCalculator(SHA256Digest()))
-        signer.init(true, privParams)
-        val components = signer.generateSignature(hash)
-        var r = components[0]
-        var s = components[1]
-
-        // Low-S malleability check (BIP 62)
-        val halfCurveOrder = domainParameters.n.shiftRight(1)
-        if (s > halfCurveOrder) {
-            s = domainParameters.n.subtract(s)
-        }
-
-        val rBytes = to32ByteArray(r)
-        val sBytes = to32ByteArray(s)
-        return (rBytes + sBytes).toHex()
-    }
-
-    /**
-     * Deterministic RFC 6979 ECDSA signature encoded in ASN.1 DER format.
-     */
-    fun signMessageDer(privateKeyHex: String, messageBytes: ByteArray): String {
-        val cleanHex = privateKeyHex.trim().removePrefix("0x").lowercase()
-        val privKeyInt = BigInteger(cleanHex, 16)
-        val privParams = ECPrivateKeyParameters(privKeyInt, domainParameters)
-
-        val hash = sha256(messageBytes)
-        val signer = ECDSASigner(HMacDSAKCalculator(SHA256Digest()))
+        val signer = ECDSASigner(HMacDSAKCalculator(org.bouncycastle.crypto.digests.SHA1Digest()))
         signer.init(true, privParams)
         val components = signer.generateSignature(hash)
         var r = components[0]
@@ -155,7 +131,8 @@ object Secp256k1Helper {
 
     /**
      * Creates the canonical Betium transaction payload string for signing.
-     * Uses sorted keys and compact JSON format.
+     * Amount and fee are converted to integer units (multiplied by 10^8).
+     * Keys are sorted alphabetically with numeric amount/fee/nonce.
      */
     fun createCanonicalTxPayload(
         sender: String,
@@ -165,13 +142,15 @@ object Secp256k1Helper {
         nonce: Long,
         tokenId: String? = null
     ): String {
-        // Build sorted JSON string matching Betium canonical specification:
-        // Keys in strict alphabetical order:
-        // amount, fee, nonce, recipient, sender, [token_id]
+        val amountBd = amount.toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO
+        val feeBd = fee.toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO
+        val amountUnits = amountBd.multiply(java.math.BigDecimal("100000000")).setScale(0, java.math.RoundingMode.HALF_UP).toLong()
+        val feeUnits = feeBd.multiply(java.math.BigDecimal("100000000")).setScale(0, java.math.RoundingMode.HALF_UP).toLong()
+
         val sb = StringBuilder()
         sb.append("{")
-        sb.append("\"amount\":\"").append(amount).append("\",")
-        sb.append("\"fee\":\"").append(fee).append("\",")
+        sb.append("\"amount\":").append(amountUnits).append(",")
+        sb.append("\"fee\":").append(feeUnits).append(",")
         sb.append("\"nonce\":").append(nonce).append(",")
         sb.append("\"recipient\":\"").append(recipient).append("\",")
         sb.append("\"sender\":\"").append(sender).append("\"")
