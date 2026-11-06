@@ -1,4 +1,4 @@
-name: Build Bullett Social Mobile APK
+name: Build Betium Wallet APK
 
 on:
   push:
@@ -45,13 +45,35 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK Licenses & Install Build Tools
+      - name: Setup Android SDK Environment & Accept Licenses
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" || true
+          # GitHub Actions ubuntu-latest runners have Android SDK pre-installed at /usr/local/lib/android/sdk
+          if [ -d "/usr/local/lib/android/sdk" ]; then
+            SDK_ROOT="/usr/local/lib/android/sdk"
+          elif [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME" ]; then
+            SDK_ROOT="$ANDROID_HOME"
+          elif [ -n "$ANDROID_SDK_ROOT" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
+            SDK_ROOT="$ANDROID_SDK_ROOT"
+          else
+            SDK_ROOT="/usr/local/lib/android/sdk"
+          fi
+
+          echo "Detected Android SDK location: $SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
+
+          # Pre-accept all standard and preview Android SDK licenses so Gradle can auto-download components
+          mkdir -p "$SDK_ROOT/licenses"
+          printf "\n24333f8a63b682429dd44c1a62f4965e17ab2040\nd56f5187479451eabf01fb78af6dfcb131a6481e\n84831b9409646a918e30573bab4c9c91346d8abd" > "$SDK_ROOT/licenses/android-sdk-license"
+          printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n5046274c4602e5178737f5bd2e0e5de65029c924" > "$SDK_ROOT/licenses/android-sdk-preview-license"
+          printf "\n33b6a2b64920402e245a4a58ff0d6e6480c558c7" > "$SDK_ROOT/licenses/google-gdk-license"
+
+          # Add sdkmanager to PATH if available, and run license accept
+          SDKM=$(find "$SDK_ROOT/cmdline-tools" -name "sdkmanager" 2>/dev/null | head -n 1)
+          if [ -n "$SDKM" ]; then
+            echo "$(dirname "$SDKM")" >> $GITHUB_PATH
+            yes 2>/dev/null | "$SDKM" --licenses 2>/dev/null || true
+          fi
 
       - name: Prepare Secrets & Environment Files
         run: |
@@ -168,6 +190,7 @@ jobs:
 
           echo "Executing release build..."
           $BUILD_CMD assembleRelease --info --stacktrace \
+            -Pandroid.builder.sdkDownload=true \
             -Pandroid.injected.signing.store.file="$KEYSTORE_PATH" \
             -Pandroid.injected.signing.store.password="$STORE_PASSWORD" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
@@ -199,8 +222,8 @@ jobs:
           fi
 
           if [ -n "$RELEASE_APK" ]; then
-            echo "Copying $RELEASE_APK to output/bullettsocial.apk"
-            cp "$RELEASE_APK" output/bullettsocial.apk
+            echo "Copying $RELEASE_APK to output/betium-wallet.apk"
+            cp "$RELEASE_APK" output/betium-wallet.apk
           else
             echo "Error: No APK found after build!"
             exit 1
@@ -215,8 +238,8 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bullettsocial-apk
-          path: output/bullettsocial.apk
+          name: betium-wallet-apk
+          path: output/betium-wallet.apk
           overwrite: true
           if-no-files-found: error
 
