@@ -125,6 +125,35 @@ object Secp256k1Helper {
     }
 
     /**
+     * Deterministic RFC 6979 ECDSA signature encoded in ASN.1 DER format.
+     */
+    fun signMessageDer(privateKeyHex: String, messageBytes: ByteArray): String {
+        val cleanHex = privateKeyHex.trim().removePrefix("0x").lowercase()
+        val privKeyInt = BigInteger(cleanHex, 16)
+        val privParams = ECPrivateKeyParameters(privKeyInt, domainParameters)
+
+        val hash = sha256(messageBytes)
+        val signer = ECDSASigner(HMacDSAKCalculator(SHA256Digest()))
+        signer.init(true, privParams)
+        val components = signer.generateSignature(hash)
+        var r = components[0]
+        var s = components[1]
+
+        val halfCurveOrder = domainParameters.n.shiftRight(1)
+        if (s > halfCurveOrder) {
+            s = domainParameters.n.subtract(s)
+        }
+
+        val derSeq = org.bouncycastle.asn1.DERSequence(
+            arrayOf(
+                org.bouncycastle.asn1.ASN1Integer(r),
+                org.bouncycastle.asn1.ASN1Integer(s)
+            )
+        )
+        return derSeq.encoded.toHex()
+    }
+
+    /**
      * Creates the canonical Betium transaction payload string for signing.
      * Uses sorted keys and compact JSON format.
      */

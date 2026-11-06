@@ -74,4 +74,66 @@ class BetiumCryptoTest {
         // 64-byte hex signature (r || s) = 128 hex chars
         assertEquals(128, signature.length)
     }
+
+    @Test
+    fun testLiveSignatureFormats() {
+        val keyPair = Secp256k1Helper.generateKeyPair()
+        val payload = """{"amount":100000000,"fee":10000,"nonce":1,"recipient":"${keyPair.nativeAddress}","sender":"${keyPair.nativeAddress}"}"""
+        val payloadBytes = payload.toByteArray(Charsets.UTF_8)
+        
+        // A. Sign SHA-256
+        val sigSha256 = signRaw(keyPair.privateKeyHex, Secp256k1Helper.sha256(payloadBytes))
+        println("Probe A (Sign SHA256):")
+        testSend(keyPair, payload, sigSha256, 100000000, 10000, 1)
+
+        // B. Sign SHA-1
+        val mdSha1 = java.security.MessageDigest.getInstance("SHA-1")
+        val sigSha1 = signRaw(keyPair.privateKeyHex, mdSha1.digest(payloadBytes))
+        println("Probe B (Sign SHA1):")
+        testSend(keyPair, payload, sigSha1, 100000000, 10000, 1)
+
+        // C. Sign Raw Payload bytes (truncated/padded to curve order if needed)
+        val sigRawBytes = signRaw(keyPair.privateKeyHex, payloadBytes)
+        println("Probe C (Sign raw bytes):")
+        testSend(keyPair, payload, sigRawBytes, 100000000, 10000, 1)
+
+        // D. Sign Double SHA-256
+        val sigDblSha256 = signRaw(keyPair.privateKeyHex, Secp256k1Helper.sha256(Secp256k1Helper.sha256(payloadBytes)))
+        println("Probe D (Sign Double SHA256):")
+        testSend(keyPair, payload, sigDblSha256, 100000000, 10000, 1)
+    }
+
+    private fun signRaw(privKeyHex: String, hash: ByteArray): String {
+        val privKeyInt = java.math.BigInteger(privKeyHex, 16)
+        val privParams = org.bouncycastle.crypto.params.ECPrivateKeyParameters(privKeyInt, Secp256k1Helper.domainParameters)
+        val signer = org.bouncycastle.crypto.signers.ECDSASigner(org.bouncycastle.crypto.signers.HMacDSAKCalculator(org.bouncycastle.crypto.digests.SHA256Digest()))
+        signer.init(true, privParams)
+        val components = signer.generateSignature(hash)
+        var r = components[0]
+        var s = components[1]
+        val halfCurveOrder = Secp256k1Helper.domainParameters.n.shiftRight(1)
+        if (s > halfCurveOrder) {
+            s = Secp256k1Helper.domainParameters.n.subtract(s)
+        }
+        return (Secp256k1Helper.to32ByteArray(r) + Secp256k1Helper.to32ByteArray(s))
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    private fun testSend(keyPair: com.example.data.crypto.KeyPairInfo, payload: String, sig: String, amount: Long, fee: Long, nonce: Long) {
+        try {
+            val jsonBody = """{"sender":"${keyPair.nativeAddress}","recipient":"${keyPair.nativeAddress}","amount":$amount,"fee":$fee,"nonce":$nonce,"public_key":"${keyPair.publicKeyHex}","signature":"$sig"}"""
+            val url = java.net.URL("https://crypto.bullettsocial.space/transaction/new")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            conn.doOutput = true
+            conn.outputStream.use { it.write(jsonBody.toByteArray()) }
+            val code = conn.responseCode
+            val resp = try { conn.inputStream.bufferedReader().readText() } catch (e: Exception) { conn.errorStream?.bufferedReader()?.readText() }
+            println("Result for sig len ${sig.length / 2} bytes: HTTP $code -> $resp")
+        } catch (e: Exception) {
+            println("Exception: ${e.message}")
+        }
+    }
 }
