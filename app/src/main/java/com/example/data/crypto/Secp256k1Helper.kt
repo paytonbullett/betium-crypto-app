@@ -99,6 +99,7 @@ object Secp256k1Helper {
 
     /**
      * Deterministic RFC 6979 ECDSA signature encoded in ASN.1 DER format over SHA-1 message hash.
+     * Matches Python ecdsa default behavior for Betium transaction signing.
      */
     fun signMessage(privateKeyHex: String, messageBytes: ByteArray): String {
         val cleanHex = privateKeyHex.trim().removePrefix("0x").lowercase()
@@ -109,17 +110,20 @@ object Secp256k1Helper {
         val mdSha1 = MessageDigest.getInstance("SHA-1")
         val hash = mdSha1.digest(messageBytes)
 
+        // RFC 6979 deterministic k calculator with SHA-1
         val signer = ECDSASigner(HMacDSAKCalculator(org.bouncycastle.crypto.digests.SHA1Digest()))
         signer.init(true, privParams)
         val components = signer.generateSignature(hash)
         var r = components[0]
         var s = components[1]
 
+        // Low-S malleability check (BIP 62)
         val halfCurveOrder = domainParameters.n.shiftRight(1)
         if (s > halfCurveOrder) {
             s = domainParameters.n.subtract(s)
         }
 
+        // Strict ASN.1 DER SEQUENCE of two INTEGERs
         val derSeq = org.bouncycastle.asn1.DERSequence(
             arrayOf(
                 org.bouncycastle.asn1.ASN1Integer(r),
@@ -132,7 +136,8 @@ object Secp256k1Helper {
     /**
      * Creates the canonical Betium transaction payload string for signing.
      * Amount and fee are converted to integer units (multiplied by 10^8).
-     * Keys are sorted alphabetically with numeric amount/fee/nonce.
+     * Keys are sorted alphabetically with numeric amount/fee/nonce (no quotes).
+     * Format: {"amount":150000000,"fee":10000,"nonce":8,"recipient":"...","sender":"..."}
      */
     fun createCanonicalTxPayload(
         sender: String,

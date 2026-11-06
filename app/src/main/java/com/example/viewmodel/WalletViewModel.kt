@@ -335,11 +335,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         else -> api.getBalance(activeWallet.nativeAddress)
                     }
                     val nonce = latestBalance.nonce + 1
-                    val senderAddress = if (latestBalance.address.isNotBlank()) latestBalance.address else activeWallet.nativeAddress
+                    val senderAddress = activeWallet.nativeAddress // Always sign/send with native address
 
                     // Check balance for BETM
                     if (tokenId.isNullOrBlank()) {
-                        val currentBalBd = BigDecimal(latestBalance.balance)
+                        val currentBalBd = try { BigDecimal(latestBalance.balance) } catch (e: Exception) { BigDecimal.ZERO }
                         val totalRequired = amountBd + BigDecimal(formattedFee)
                         if (currentBalBd < totalRequired) {
                             return@withContext Pair(false, "Insufficient balance: $currentBalBd BETM (Required: $totalRequired BETM)")
@@ -373,19 +373,30 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         tokenId = tokenId
                     )
 
-                    val response: TransactionResponse = api.submitTransaction(request)
-                    val txId = response.txId ?: "tx_${System.currentTimeMillis()}"
-                    val success = response.status.equals("ok", ignoreCase = true) ||
-                            response.status.equals("success", ignoreCase = true) ||
-                            response.error == null
+                    try {
+                        val response: TransactionResponse = api.submitTransaction(request)
+                        val txId = response.txId ?: "tx_${System.currentTimeMillis()}"
+                        val success = response.status.equals("ok", ignoreCase = true) ||
+                                response.status.equals("success", ignoreCase = true) ||
+                                response.error == null
 
-                    val msg = if (success) {
-                        "Transaction submitted successfully! ID: ${txId.take(16)}..."
-                    } else {
-                        response.error ?: response.message ?: "Transaction rejected by node"
+                        val msg = if (success) {
+                            "Transaction submitted successfully! ID: ${txId.take(16)}..."
+                        } else {
+                            response.error ?: response.message ?: "Transaction rejected by node"
+                        }
+                        Pair(success, msg)
+                    } catch (e: retrofit2.HttpException) {
+                        val errorBody = e.response()?.errorBody()?.string() ?: ""
+                        val nodeMsg = try {
+                            val adapter = com.squareup.moshi.Moshi.Builder().build().adapter(Map::class.java)
+                            val map = adapter.fromJson(errorBody)
+                            (map?.get("error") ?: map?.get("message") ?: "HTTP ${e.code()}").toString()
+                        } catch (parseErr: Exception) {
+                            "HTTP ${e.code()}: $errorBody"
+                        }
+                        Pair(false, nodeMsg)
                     }
-
-                    Pair(success, msg)
                 }
 
                 _uiState.update { it.copy(isLoading = false) }
@@ -399,7 +410,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false) }
-                val errorMsg = e.localizedMessage ?: "Network or broadcast failure"
+                val errorMsg = if (e is retrofit2.HttpException) {
+                    val body = e.response()?.errorBody()?.string() ?: ""
+                    "Node error: $body"
+                } else {
+                    e.localizedMessage ?: "Network or broadcast failure"
+                }
                 _events.emit(UiEvent.TransactionFailed(errorMsg))
                 onComplete(false, errorMsg)
             }

@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/betium_app_icon_1793994146235"
+        android:drawable="@drawable/betium_b_icon_1794008474347"
         android:gravity="center" />
 </layer-list>

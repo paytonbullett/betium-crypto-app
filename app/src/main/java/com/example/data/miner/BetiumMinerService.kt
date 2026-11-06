@@ -202,8 +202,18 @@ class BetiumMinerService : Service() {
                                     } else {
                                         val errDetails = submitRes.error ?: submitRes.message ?: "Unknown node rejection"
                                         MinerManager.log("❌ Node rejected block #$blockIndex: $errDetails")
-                                        MinerManager.log("Submitted block payload: index=$blockIndex, diff=$difficulty, nonce=$nonce, prevHash=$prevHash")
                                     }
+                                } catch (e: retrofit2.HttpException) {
+                                    val errorBody = e.response()?.errorBody()?.string() ?: ""
+                                    val nodeMsg = try {
+                                        val adapter = com.squareup.moshi.Moshi.Builder().build().adapter(Map::class.java)
+                                        val map = adapter.fromJson(errorBody)
+                                        (map?.get("error") ?: map?.get("message") ?: "HTTP ${e.code()}").toString()
+                                    } catch (parseErr: Exception) {
+                                        "HTTP ${e.code()}: $errorBody"
+                                    }
+                                    MinerManager.log("❌ Node Error (${e.code()}): $nodeMsg")
+                                    MinerManager.log("Payload hashed: $candidateJson")
                                 } catch (subErr: Exception) {
                                     MinerManager.log("❌ Block submission exception: ${subErr.localizedMessage ?: subErr.message}")
                                 }
@@ -359,7 +369,16 @@ class BetiumMinerService : Service() {
         return when (obj) {
             null -> "null"
             is String -> "\"$obj\""
-            is Number, is Boolean -> obj.toString()
+            is Number -> {
+                val d = obj.toDouble()
+                if (d == d.toLong().toDouble()) {
+                    d.toLong().toString()
+                } else {
+                    // Avoid scientific notation and ensure compact formatting
+                    java.math.BigDecimal(obj.toString()).stripTrailingZeros().toPlainString()
+                }
+            }
+            is Boolean -> obj.toString()
             is Map<*, *> -> {
                 val entries = obj.entries
                     .filter { it.key != null && it.value != null }
