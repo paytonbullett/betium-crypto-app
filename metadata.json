@@ -1,0 +1,6 @@
+{
+  "name": "Betium Wallet",
+  "description": "Native mobile wallet and light miner for the Betium blockchain",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
