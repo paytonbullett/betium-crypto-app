@@ -100,7 +100,7 @@ fun DashboardScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "B",
+                                "B̤̿̿",
                                 fontWeight = FontWeight.Black,
                                 color = primaryColor,
                                 fontSize = 18.sp

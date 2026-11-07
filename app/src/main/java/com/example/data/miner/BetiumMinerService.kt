@@ -120,13 +120,21 @@ class BetiumMinerService : Service() {
                     val blockIndex = template.index ?: template.height ?: 0L
                     val prevHash = template.previousHash ?: "0".repeat(64)
                     val difficulty = if (template.difficulty > 0) template.difficulty else 8L
-                    val protocolVersion = template.protocolVersion
+                    
+                    // Python: difficulty_bits = difficulty * 4 if index < 41 else difficulty
+                    val bits = if (blockIndex < 41) difficulty * 4 else difficulty
+                    
+                    val protocolVersion = template.protocolVersion ?: 5
                     val merkleRoot = template.merkleRoot ?: ""
-                    val transactions = template.transactions ?: emptyList()
+                    
+                    // Clean transactions list to ensure whole numbers are Longs (prevents Moshi 1.0 vs 1 mismatch)
+                    val rawTransactions = template.transactions ?: emptyList()
+                    val transactions = cleanTransactionsList(rawTransactions)
+                    
                     val txJson = canonicalizeJson(transactions)
-                    val timestamp = template.timestamp ?: (System.currentTimeMillis() / 1000)
+                    val timestamp = System.currentTimeMillis() / 1000
 
-                    // Betium canonical block JSON prefix/suffix for ultra-fast native PoW hashing
+                    // Betium canonical block JSON prefix/suffix for PoW hashing
                     // Keys in strict alphabetical order: difficulty, index, merkle_root, nonce, previous_hash, protocol_version, timestamp, transactions
                     val prefix = """{"difficulty":$difficulty,"index":$blockIndex,"merkle_root":"$merkleRoot","nonce":"""
                     val suffix = ""","previous_hash":"$prevHash","protocol_version":$protocolVersion,"timestamp":$timestamp,"transactions":$txJson}"""
@@ -135,12 +143,12 @@ class BetiumMinerService : Service() {
                         it.copy(
                             currentHeight = blockIndex,
                             currentTemplate = template,
-                            statusMessage = "Mining block #$blockIndex (Difficulty $difficulty)"
+                            statusMessage = "Mining block #$blockIndex (Difficulty $difficulty, $bits bits)"
                         )
                     }
-                    MinerManager.log("Template loaded: Block #$blockIndex • Diff $difficulty")
+                    MinerManager.log("Template loaded: Block #$blockIndex • Diff $difficulty ($bits bits)")
 
-                    var nonce = template.initialNonce ?: (System.currentTimeMillis() and 0xFFFFL)
+                    var nonce = (System.currentTimeMillis() and 0xFFFFL)
                     var blockSolved = false
 
                     // Mine in chunks of 600 hashes to yield coroutine & update stats
@@ -155,20 +163,19 @@ class BetiumMinerService : Service() {
                             val candidateJson = prefix + nonce + suffix
                             val hashHex = Secp256k1Helper.sha256Hex(candidateJson.toByteArray(Charsets.UTF_8))
 
-                            // Check difficulty target using exact bit-shift test: (hashBigInt >> (256 - difficulty)) == 0
+                            // Check difficulty target using exact bit-shift test: (hashBigInt >> (256 - bits)) == 0
                             val hashBigInt = BigInteger(hashHex, 16)
-                            val shiftAmount = 256 - difficulty.toInt()
+                            val shiftAmount = 256 - bits.toInt()
                             val meetsTarget = if (shiftAmount >= 0) {
                                 hashBigInt.shiftRight(shiftAmount) == BigInteger.ZERO
                             } else {
-                                countLeadingZeroBits(hashHex) >= difficulty
+                                countLeadingZeroBits(hashHex) >= bits
                             }
 
                             if (meetsTarget) {
                                 blockSolved = true
                                 MinerManager.log("🎉 BLOCK SOLVED! Nonce: $nonce")
                                 MinerManager.log("Hash: $hashHex")
-                                MinerManager.log("Hashed JSON payload: $candidateJson")
 
                                 val submitReq = BlockSubmitRequest(
                                     difficulty = difficulty,
@@ -202,6 +209,7 @@ class BetiumMinerService : Service() {
                                     } else {
                                         val errDetails = submitRes.error ?: submitRes.message ?: "Unknown node rejection"
                                         MinerManager.log("❌ Node rejected block #$blockIndex: $errDetails")
+                                        MinerManager.log("Hashed JSON payload was: $candidateJson")
                                     }
                                 } catch (e: retrofit2.HttpException) {
                                     val errorBody = e.response()?.errorBody()?.string() ?: ""
@@ -213,7 +221,7 @@ class BetiumMinerService : Service() {
                                         "HTTP ${e.code()}: $errorBody"
                                     }
                                     MinerManager.log("❌ Node Error (${e.code()}): $nodeMsg")
-                                    MinerManager.log("Payload hashed: $candidateJson")
+                                    MinerManager.log("Hashed JSON payload was: $candidateJson")
                                 } catch (subErr: Exception) {
                                     MinerManager.log("❌ Block submission exception: ${subErr.localizedMessage ?: subErr.message}")
                                 }
@@ -393,6 +401,30 @@ class BetiumMinerService : Service() {
                 "[$items]"
             }
             else -> "\"$obj\""
+        }
+    }
+
+    private fun cleanTransactionsList(list: List<Map<String, Any>>): List<Map<String, Any>> {
+        return list.map { tx ->
+            tx.mapValues { (_, value) ->
+                cleanValue(value)
+            }
+        }
+    }
+
+    private fun cleanValue(value: Any?): Any {
+        return when (value) {
+            is Number -> {
+                val d = value.toDouble()
+                if (d == d.toLong().toDouble()) d.toLong() else d
+            }
+            is Map<*, *> -> {
+                value.mapValues { (_, v) -> cleanValue(v) }
+            }
+            is List<*> -> {
+                value.map { cleanValue(it) }
+            }
+            else -> value ?: ""
         }
     }
 

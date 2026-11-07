@@ -98,8 +98,9 @@ object Secp256k1Helper {
     // Replaced by DER SHA-1 signMessage below
 
     /**
-     * Deterministic RFC 6979 ECDSA signature encoded in ASN.1 DER format over SHA-1 message hash.
+     * Deterministic RFC 6979 ECDSA signature (raw 64 bytes: r || s) over SHA-1 message hash.
      * Matches Python ecdsa default behavior for Betium transaction signing.
+     * Returns exactly 128 hex characters (64 bytes).
      */
     fun signMessage(privateKeyHex: String, messageBytes: ByteArray): String {
         val cleanHex = privateKeyHex.trim().removePrefix("0x").lowercase()
@@ -123,14 +124,10 @@ object Secp256k1Helper {
             s = domainParameters.n.subtract(s)
         }
 
-        // Strict ASN.1 DER SEQUENCE of two INTEGERs
-        val derSeq = org.bouncycastle.asn1.DERSequence(
-            arrayOf(
-                org.bouncycastle.asn1.ASN1Integer(r),
-                org.bouncycastle.asn1.ASN1Integer(s)
-            )
-        )
-        return derSeq.encoded.toHex()
+        // Return raw r (32 bytes) + s (32 bytes) as hex
+        val rBytes = to32ByteArray(r)
+        val sBytes = to32ByteArray(s)
+        return (rBytes + sBytes).toHex()
     }
 
     /**
@@ -145,23 +142,45 @@ object Secp256k1Helper {
         amount: String,
         fee: String,
         nonce: Long,
-        tokenId: String? = null
+        tokenId: String? = null,
+        action: String? = null
     ): String {
         val amountBd = amount.toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO
         val feeBd = fee.toBigDecimalOrNull() ?: java.math.BigDecimal.ZERO
         val amountUnits = amountBd.multiply(java.math.BigDecimal("100000000")).setScale(0, java.math.RoundingMode.HALF_UP).toLong()
         val feeUnits = feeBd.multiply(java.math.BigDecimal("100000000")).setScale(0, java.math.RoundingMode.HALF_UP).toLong()
 
+        // Fields must be in alphabetical order: action, amount, fee, nonce, recipient, sender, token_id
         val sb = StringBuilder()
         sb.append("{")
-        sb.append("\"amount\":").append(amountUnits).append(",")
-        sb.append("\"fee\":").append(feeUnits).append(",")
-        sb.append("\"nonce\":").append(nonce).append(",")
-        sb.append("\"recipient\":\"").append(recipient).append("\",")
+        
+        var first = true
+        
+        if (!action.isNullOrBlank()) {
+            sb.append("\"action\":\"").append(action).append("\"")
+            first = false
+        }
+        
+        if (!first) sb.append(",")
+        sb.append("\"amount\":").append(amountUnits)
+        
+        sb.append(",")
+        sb.append("\"fee\":").append(feeUnits)
+        
+        sb.append(",")
+        sb.append("\"nonce\":").append(nonce)
+        
+        sb.append(",")
+        sb.append("\"recipient\":\"").append(recipient).append("\"")
+        
+        sb.append(",")
         sb.append("\"sender\":\"").append(sender).append("\"")
-        if (!tokenId.isNullOrBlank()) {
+        
+        // Matches Python consensus.py: only include token_id if it's NOT the native token
+        if (!tokenId.isNullOrBlank() && tokenId.uppercase() != "BETM") {
             sb.append(",\"token_id\":\"").append(tokenId).append("\"")
         }
+        
         sb.append("}")
         return sb.toString()
     }

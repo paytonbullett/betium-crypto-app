@@ -71,8 +71,8 @@ class BetiumCryptoTest {
         // Sign transaction
         val samplePrivKey = "88b02c68889cd9bdff3ae6f4e47ff123886781d1a1dd76f0bb66302221948764"
         val signature = Secp256k1Helper.signMessage(samplePrivKey, payload.toByteArray(Charsets.UTF_8))
-        // DER signature is typically 140-142 hex chars (70-71 bytes)
-        assertTrue(signature.length >= 136)
+        // Raw 64-byte hex signature (r || s) = 128 hex chars
+        assertEquals(128, signature.length)
     }
 
     @Test
